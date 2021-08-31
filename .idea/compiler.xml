@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="HaskellBuildOptions">
+    <useCabal>true</useCabal>
+    <ghcPath>$USER_HOME$/.ghcup/bin/ghc</ghcPath>
+    <cabalPath>$USER_HOME$/.ghcup/bin/cabal</cabalPath>
+    <stackPath>$USER_HOME$/.nix-profile/bin/stack</stackPath>
+  </component>
+</project>

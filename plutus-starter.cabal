@@ -43,8 +43,10 @@ library
     exposed-modules:
       MyModule
       Plutus.Contracts.Game
+      Smartchain.Contract.CLAP.MonetaryPolicy
     build-depends:
       base >= 4.9 && < 5,
+      lens,
       aeson,
       bytestring,
       containers,
