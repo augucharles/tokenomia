@@ -15,125 +15,191 @@
 {-# LANGUAGE RankNTypes         #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# OPTIONS_GHC -fno-ignore-interface-pragmas #-}
 
--- | Implements a custom currency with a minting policy that allows
---   the minting of a fixed amount of units.
-
 module Smartchain.Contract.CLAP.MonetaryPolicy(
-    CurrencySchema
-    , CurrencyError(..)
-    , AsCurrencyError(..)
-    -- , curPolicy
-    -- * Actions etc
+    MonetaryPolicySchema
+    , CLAPMonetaryPolicyError(..)
+    , AsCLAPMonetaryPolicyError(..)
     , mintCLAPContract
-    -- , currencySymbol
-    -- * Simple minting policy currency
-    , mintCLAPs
+    , burnCLAPContract
+    , mkCLAPMonetaryPolicyScript
+    , clapTotalSupply
+    , clapPlutusMonetaryPolicyScript
+    , clapMonetaryPolicyScriptShortBS
     ) where
 
-import           Control.Lens
-import           PlutusTx.Prelude       hiding (Monoid (..), Semigroup (..))
+import Control.Lens ( makeClassyPrisms, review )
+import PlutusTx.Prelude
+    ( (>>),
+      (>>=),
+      (<),
+      Bool(..),
+      (.),
+      Eq((==)),
+      Applicative(pure),
+      (&&),
+      (||),
+      (<$>),
+      ($),
+      traceIfFalse )
 
-import           Plutus.Contract        as Contract
+import Plutus.Contract as Contract
+    ( awaitTxConfirmed,
+      submitTxConstraintsWith,
+      utxoAt,
+      mapError,
+      Endpoint,
+      type (.\/),
+      Contract,
+      AsContractError(_ContractError),
+      ContractError )
 import           Plutus.Contract.Wallet (getUnspentOutput)
 
-import           Ledger                 (PubKeyHash, TxId, TxOutRef (..), pubKeyHash, pubKeyHashAddress,
-                                         scriptCurrencySymbol, txId)
+import           Ledger                 
 import qualified Ledger.Constraints     as Constraints
 import qualified Ledger.Contexts        as V
-import           Ledger.Scripts
-import qualified PlutusTx
+import PlutusTx
 
 import qualified Ledger.Typed.Scripts   as Scripts
-import           Ledger.Value           (CurrencySymbol,AssetClass,TokenName (..), Value,assetClass,assetClassValue)
-import qualified Ledger.Value           as Value
+import           Ledger.Value           (TokenName (..),assetClass,assetClassValue, valueOf)
 
+import qualified Data.ByteString.Lazy as LB
+import qualified Data.ByteString.Short as SBS
 import           Data.Aeson             (FromJSON, ToJSON)
-import           Data.Semigroup         (Last (..))
 import           GHC.Generics           (Generic)
-import qualified PlutusTx.AssocMap      as AssocMap
-import           Prelude                (Semigroup (..))
+import           Prelude                (Semigroup (..),Integer)
 import qualified Prelude                as Haskell
-import           Schema                 (ToSchema)
+import           Cardano.Api.Shelley (PlutusScript (..), PlutusScriptV1)
+import           Codec.Serialise
 
-{- HLINT ignore "Use uncurry" -}
-
+{-# INLINABLE clapAssetClass #-}
 clapAssetClass :: CurrencySymbol  -> AssetClass
 clapAssetClass clapPolicyHash = assetClass clapPolicyHash (TokenName "CLAP")
 
+{-# INLINABLE clapTotalSupply #-}
 clapTotalSupply :: CurrencySymbol -> Value
 clapTotalSupply clapPolicyHash
     = assetClassValue
         (clapAssetClass clapPolicyHash )
-        1000000000
+        1_000_000_000_000
 
-clapMintingPolicyValidator :: TxOutRef -> () -> V.ScriptContext -> Bool
-clapMintingPolicyValidator (TxOutRef refHash refIdx) _ ctx@V.ScriptContext{V.scriptContextTxInfo=txinfo} =
-    let
-        -- see note [Obtaining the currency symbol]
-        clapPolicyHash = V.ownCurrencySymbol ctx
+-- /////////////////
+-- // On-Chain Part
+-- /////////////////
 
-        minted = V.txInfoMint txinfo
-        expected = clapTotalSupply clapPolicyHash
 
-        -- True if the pending transaction mints the amount of
-        -- currency that we expect
-        mintOK =
-            let v = expected == minted
-            in traceIfFalse "C0" {-"Value minted different from expected"-} v
-
-        -- True if the pending transaction spends the output
-        -- identified by @(refHash, refIdx)@
-        txOutputSpent =
-            let v = V.spendsOutput txinfo refHash refIdx
-            in  traceIfFalse "C1" {-"Pending transaction does not spend the designated transaction output"-} v
-
-    in mintOK && txOutputSpent
-
-oneShotMintingPolicy :: TxOutRef -> MintingPolicy
-oneShotMintingPolicy txOutRef = mkMintingPolicyScript $
-    $$(PlutusTx.compile [|| Scripts.wrapMintingPolicy . clapMintingPolicyValidator ||])
+mkCLAPMonetaryPolicyScript :: TxOutRef -> MintingPolicy
+mkCLAPMonetaryPolicyScript txOutRef = mkMintingPolicyScript $
+    $$(PlutusTx.compile [|| \c -> Scripts.wrapMintingPolicy (monetaryPolicy c) ||])
         `PlutusTx.applyCode`
             PlutusTx.liftCode txOutRef
+    where
+        {-# INLINABLE monetaryPolicy #-}
+        monetaryPolicy :: TxOutRef -> () -> V.ScriptContext -> Bool
+        monetaryPolicy a b c = burningPolicy a b c || mintingPolicy a b c
+
+        {-# INLINABLE mintingPolicy #-}
+        mintingPolicy :: TxOutRef -> () -> V.ScriptContext -> Bool
+        mintingPolicy (TxOutRef refHash refIdx) _ ctx@V.ScriptContext{V.scriptContextTxInfo=txinfo}
+            =  traceIfFalse "E1" {- Value minted different from expected (10^9 CLAPs)" -}
+                (clapTotalSupply (V.ownCurrencySymbol ctx) == V.txInfoMint txinfo)
+            && traceIfFalse "E2" {- Pending transaction does not spend the designated transaction output (necessary for one-time minting Policy) -}
+                (V.spendsOutput txinfo refHash refIdx)
+
+        {-# INLINABLE burningPolicy #-}
+        burningPolicy :: TxOutRef -> () -> V.ScriptContext -> Bool
+        burningPolicy _ _ context@V.ScriptContext{V.scriptContextTxInfo=txinfo}
+            = valueOf (V.txInfoMint txinfo) (V.ownCurrencySymbol context) (TokenName "CLAP") < 0
 
 
+validator :: Validator
+validator = Validator 
+    $ unMintingPolicyScript 
+    $ mkCLAPMonetaryPolicyScript 
+        (TxOutRef (TxId "95f644032e4e2f516ddee5ae9ceb8d467f53f630c4d4f481771cb56063adb244") 0)
 
-newtype CurrencyError =
-    CurContractError ContractError
+scriptAsCbor :: LB.ByteString
+scriptAsCbor = serialise validator
+
+clapPlutusMonetaryPolicyScript :: PlutusScript PlutusScriptV1
+clapPlutusMonetaryPolicyScript = PlutusScriptSerialised . SBS.toShort $ LB.toStrict scriptAsCbor
+
+clapMonetaryPolicyScriptShortBS :: SBS.ShortByteString
+clapMonetaryPolicyScriptShortBS = SBS.toShort . LB.toStrict $ scriptAsCbor
+
+-- /////////////////
+-- // Off-Chain Part
+-- /////////////////
+
+type Amount = Integer
+type MonetaryPolicySchema
+    = Endpoint   "Mint CLAPs" ()
+    .\/ Endpoint "Burn CLAPs" (CurrencySymbol,Amount)
+
+newtype CLAPMonetaryPolicyError =
+    CLAPMonetaryPolicyError ContractError
     deriving stock (Haskell.Eq, Haskell.Show, Generic)
     deriving anyclass (ToJSON, FromJSON)
 
-makeClassyPrisms ''CurrencyError
+makeClassyPrisms ''CLAPMonetaryPolicyError
 
-instance AsContractError CurrencyError where
-    _ContractError = _CurContractError
+instance AsContractError CLAPMonetaryPolicyError where
+    _ContractError = _CLAPMonetaryPolicyError
+
+
+burnCLAPContract
+    :: forall w s e.
+    ( AsCLAPMonetaryPolicyError e
+    )
+    => PubKeyHash
+    -> TxOutRef
+    -> Integer
+    -> Contract w s e ()
+burnCLAPContract burnerPK txOutRef amount =
+    mapError (review _CLAPMonetaryPolicyError) $ do
+    let clapPolicyHash = (scriptCurrencySymbol . mkCLAPMonetaryPolicyScript) txOutRef
+        clapMonetaryPolicyScript = mkCLAPMonetaryPolicyScript txOutRef
+    utxosInBurnerWallet <- utxoAt (pubKeyHashAddress burnerPK)
+    submitTxConstraintsWith
+            @Scripts.Any
+            (Constraints.mintingPolicy clapMonetaryPolicyScript <> Constraints.unspentOutputs utxosInBurnerWallet)
+            (Constraints.mustMintValue $ assetClassValue (clapAssetClass clapPolicyHash) amount)
+     >>= awaitTxConfirmed . txId
+
+
 
 mintCLAPContract
     :: forall w s e.
-    ( AsCurrencyError e
+    ( AsCLAPMonetaryPolicyError e
     )
     => PubKeyHash
-    -> Contract w s e CurrencySymbol
+    -> Contract w s e (CurrencySymbol,Ledger.TxOutRef)
 mintCLAPContract pk =
-    mapError (review _CurrencyError) $ do
-    (currentClapPolicyHash, currentClapMintingPolicy , txOutRef )
-        <- (\txOutRef -> ( (scriptCurrencySymbol . oneShotMintingPolicy) txOutRef
-                            , oneShotMintingPolicy txOutRef
-                            , txOutRef  )) <$> getUnspentOutput
-    utxo <- utxoAt (pubKeyHashAddress pk) -- TODO: use chain index
-    tx <- submitTxConstraintsWith
+    mapError (review _CLAPMonetaryPolicyError) $ do
+    (txOutRef,clapMonetaryPolicyScript , clapPolicyHash )
+        <- clapInstance
+            Haskell.id
+            mkCLAPMonetaryPolicyScript
+            (scriptCurrencySymbol . mkCLAPMonetaryPolicyScript) <$> getUnspentOutput
+    utxosInWallet <- utxoAt (pubKeyHashAddress pk)
+    submitTxConstraintsWith
             @Scripts.Any
-            (Constraints.mintingPolicy currentClapMintingPolicy <> Constraints.unspentOutputs utxo)
-            (Constraints.mustSpendPubKeyOutput txOutRef <> Constraints.mustMintValue (clapTotalSupply currentClapPolicyHash))
-    _ <- awaitTxConfirmed (txId tx)
-    pure currentClapPolicyHash
+            (Constraints.mintingPolicy clapMonetaryPolicyScript <> Constraints.unspentOutputs utxosInWallet)
+            (Constraints.mustSpendPubKeyOutput txOutRef         <> Constraints.mustMintValue (clapTotalSupply clapPolicyHash))
+     >>= awaitTxConfirmed . txId
+     >>  pure (clapPolicyHash,txOutRef)
 
-type CurrencySchema = Endpoint "Mint CLAPs" ()
 
-mintCLAPs :: Promise (Maybe (Last CurrencySymbol)) CurrencySchema CurrencyError CurrencySymbol
-mintCLAPs = endpoint @"Mint CLAPs" $ \() -> do
-    ownPK <- pubKeyHash <$> ownPubKey
-    cur <- mintCLAPContract ownPK
-    tell (Just (Last cur))
-    pure cur
+
+clapInstance
+    :: (TxOutRef -> TxOutRef)
+    -> (TxOutRef -> MintingPolicy )
+    -> (TxOutRef -> CurrencySymbol)
+    -> (TxOutRef -> (TxOutRef,MintingPolicy,CurrencySymbol))
+clapInstance a b c = do
+    x <- a
+    y <- b
+    z <- c
+    Haskell.return (x,y,z)
