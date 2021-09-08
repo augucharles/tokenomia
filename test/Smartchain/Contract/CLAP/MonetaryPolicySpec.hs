@@ -17,6 +17,8 @@ import           Data.Semigroup         (Last (..))
 import           Plutus.Trace.Emulator             (EmulatorRuntimeError (GenericError))
 import           Control.Monad.Freer.Error         (throwError)
 
+--- WARNING : WORK IN PROGRESS
+
 -- Gen TxOutRef 
 -- invariants 
     -- 10^12 Claps minted with Policy Hash == f (TxOutRef) 

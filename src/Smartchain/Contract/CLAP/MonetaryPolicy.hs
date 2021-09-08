@@ -26,8 +26,6 @@ module Smartchain.Contract.CLAP.MonetaryPolicy(
     , burnCLAPContract
     , mkCLAPMonetaryPolicyScript
     , clapTotalSupply
-    , clapPlutusMonetaryPolicyScript
-    , clapMonetaryPolicyScriptShortBS
     ) where
 
 import Control.Lens ( makeClassyPrisms, review )
@@ -57,22 +55,30 @@ import Plutus.Contract as Contract
       ContractError )
 import           Plutus.Contract.Wallet (getUnspentOutput)
 
-import           Ledger                 
+import Ledger
+    ( TxOutRef(..),
+      scriptCurrencySymbol,
+      txId,
+      pubKeyHashAddress,
+      mkMintingPolicyScript,
+      PubKeyHash,
+      MintingPolicy,
+      AssetClass,
+      CurrencySymbol,
+      Value )                 
 import qualified Ledger.Constraints     as Constraints
 import qualified Ledger.Contexts        as V
-import PlutusTx
+import PlutusTx ( BuiltinData, applyCode, liftCode, compile )
 
 import qualified Ledger.Typed.Scripts   as Scripts
 import           Ledger.Value           (TokenName (..),assetClass,assetClassValue, valueOf)
 
-import qualified Data.ByteString.Lazy as LB
-import qualified Data.ByteString.Short as SBS
 import           Data.Aeson             (FromJSON, ToJSON)
 import           GHC.Generics           (Generic)
 import           Prelude                (Semigroup (..),Integer)
 import qualified Prelude                as Haskell
-import           Cardano.Api.Shelley (PlutusScript (..), PlutusScriptV1)
-import           Codec.Serialise
+
+import PlutusTx.Builtins.Internal ()
 
 {-# INLINABLE clapAssetClass #-}
 clapAssetClass :: CurrencySymbol  -> AssetClass
@@ -97,11 +103,11 @@ mkCLAPMonetaryPolicyScript txOutRef = mkMintingPolicyScript $
             PlutusTx.liftCode txOutRef
     where
         {-# INLINABLE monetaryPolicy #-}
-        monetaryPolicy :: TxOutRef -> () -> V.ScriptContext -> Bool
-        monetaryPolicy a b c = burningPolicy a b c || mintingPolicy a b c
+        monetaryPolicy :: TxOutRef -> BuiltinData -> V.ScriptContext -> Bool
+        monetaryPolicy a b c =  burningPolicy a b c || mintingPolicy a b c
 
         {-# INLINABLE mintingPolicy #-}
-        mintingPolicy :: TxOutRef -> () -> V.ScriptContext -> Bool
+        mintingPolicy :: TxOutRef -> BuiltinData -> V.ScriptContext -> Bool
         mintingPolicy (TxOutRef refHash refIdx) _ ctx@V.ScriptContext{V.scriptContextTxInfo=txinfo}
             =  traceIfFalse "E1" {- Value minted different from expected (10^9 CLAPs)" -}
                 (clapTotalSupply (V.ownCurrencySymbol ctx) == V.txInfoMint txinfo)
@@ -109,25 +115,11 @@ mkCLAPMonetaryPolicyScript txOutRef = mkMintingPolicyScript $
                 (V.spendsOutput txinfo refHash refIdx)
 
         {-# INLINABLE burningPolicy #-}
-        burningPolicy :: TxOutRef -> () -> V.ScriptContext -> Bool
+        burningPolicy :: TxOutRef -> BuiltinData -> V.ScriptContext -> Bool
         burningPolicy _ _ context@V.ScriptContext{V.scriptContextTxInfo=txinfo}
             = valueOf (V.txInfoMint txinfo) (V.ownCurrencySymbol context) (TokenName "CLAP") < 0
 
 
-validator :: Validator
-validator = Validator 
-    $ unMintingPolicyScript 
-    $ mkCLAPMonetaryPolicyScript 
-        (TxOutRef (TxId "95f644032e4e2f516ddee5ae9ceb8d467f53f630c4d4f481771cb56063adb244") 0)
-
-scriptAsCbor :: LB.ByteString
-scriptAsCbor = serialise validator
-
-clapPlutusMonetaryPolicyScript :: PlutusScript PlutusScriptV1
-clapPlutusMonetaryPolicyScript = PlutusScriptSerialised . SBS.toShort $ LB.toStrict scriptAsCbor
-
-clapMonetaryPolicyScriptShortBS :: SBS.ShortByteString
-clapMonetaryPolicyScriptShortBS = SBS.toShort . LB.toStrict $ scriptAsCbor
 
 -- /////////////////
 -- // Off-Chain Part
