@@ -51,12 +51,20 @@ import           System.Environment (getEnv)
 import           Ledger.Contexts ( scriptCurrencySymbol )
 import           Codec.Serialise ( serialise )
 
-import           Ledger ( unMintingPolicyScript, MintingPolicy, CurrencySymbol )
+import           Ledger ( unMintingPolicyScript, MintingPolicy, CurrencySymbol, PubKeyHash )
 
-import           Cardano.Api ( writeFileTextEnvelope, Error(displayError) )
+import Cardano.Api
+    ( writeFileTextEnvelope,
+      Error(displayError),
+      AsType(AsVerificationKey),
+      PaymentExtendedKey )
 import qualified Cardano.Api.Shelley  as Script
 import           System.Directory
+import           Cardano.CLI.Shelley.Key
+import Cardano.CLI.Types
 
+import Data.String
+import Debug.Trace
 
 {-# ANN module "HLINT: ignore Use camelCase" #-}
 
@@ -74,10 +82,13 @@ data Environment = Testnet {magicNumber :: Integer}
 data Wallet = Wallet 
               { name :: WalletName
               , paymentAddress :: PaymentAddress
-              , paymentSigningKeyPath :: FilePath } 
+              , paymentSigningKeyPath :: FilePath
+              , verificationKey :: PubKeyHash  } 
 
 instance Show Wallet where 
-    show Wallet {..} = ">> " <> name <> " :" <> paymentAddress 
+    show Wallet {..} = ">> " <> name 
+        <> " \n payment addr :" <> paymentAddress
+        <> " \n public key hash :" <> show verificationKey 
 
 
 query_registered_wallets :: (MonadIO m ) => m [Wallet]
@@ -88,10 +99,28 @@ query_registered_wallets = do
         do 
         let paymentAddressPath = keyPath <> name <> "/payment.addr"  
             paymentSigningKeyPath = keyPath <> name <> "/payment-signing.skey"  
+            paymentVerificationPath = keyPath <> name <> "/payment-verification.vkey"
         paymentAddress <- liftIO $ C.unpack  <$> (cat paymentAddressPath |> capture) 
-        return $ Wallet {..} ) walletNames  
+        verificationKey <- getVerificationKey paymentVerificationPath 
+            >>= \case 
+                Left x -> error (show x)
+                Right y -> return y
+        return $ Wallet {verificationKey = verificationKey,..} ) walletNames  
 
-   
+
+getVerificationKey :: (MonadIO m ) => FilePath -> m (Either (Script.FileError InputDecodeError) PubKeyHash)
+getVerificationKey paymentVerificationPath = do 
+    liftIO $ (fmap .fmap) 
+        convert
+        (readVerificationKeyOrTextEnvFile  
+            Script.AsPaymentKey
+            ((VerificationKeyFilePath . VerificationKeyFile) paymentVerificationPath))
+
+
+convert :: Script.VerificationKey Script.PaymentKey ->  PubKeyHash
+convert (Script.PaymentVerificationKey x) =  (fromString . show) (trace (show x) x) 
+
+
 register_shelley_wallet 
     :: ( MonadIO m 
        , MonadReader Environment m ) 
@@ -263,7 +292,7 @@ getFolderPath' s = do
 
 getRootCLIFolder :: (MonadIO m) => m FilePath
 getRootCLIFolder = do
-    a <- ( <> "/.tokenomia-cli/") <$> (liftIO . getEnv) "HOME"
+    a <- ( <> "/.tokenomia-cli") <$> (liftIO . getEnv) "HOME"
     liftIO $ mkdir "-p" a
     return a
 

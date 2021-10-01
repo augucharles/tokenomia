@@ -12,7 +12,7 @@
 {-# OPTIONS_GHC -fno-warn-unused-top-binds #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Tokenomia.Vesting.CLI where
+module Tokenomia.Vesting.CLI (vestFunds) where
 
 import           Prelude
 import           Shh
@@ -38,4 +38,16 @@ import qualified Tokenomia.Wallet.CLI as Wallet
 
 load SearchPath ["echo"]
 
-vest :: (MonadMask m,MonadIO m, MonadReader Environment m)  => m ()
+vestFunds :: (MonadMask m,MonadIO m, MonadReader Environment m)  => m ()
+vestFunds = do 
+    liftIO $ echo "Select the token's owner wallet" 
+    Wallet.select
+        >>= \case 
+            Nothing -> liftIO $ print "No Wallet Registered !"
+            Just ownerWallet -> do
+                liftIO $ echo "Select the investor's wallet" 
+                Wallet.select
+                    >>= \case 
+                        Nothing -> liftIO $ print "No Wallet Registered !"
+                        Just investorWallet@Wallet{} -> do 
+                            liftIO $ echo (show investorWallet )

@@ -45,6 +45,7 @@ library
       Tokenomia.Token.CLAPStyle.Burn
       Tokenomia.Token.CLAPStyle.MonetaryPolicy
       Tokenomia.Wallet.CLI
+      Tokenomia.Vesting.CLI
       Tokenomia.Token.Transfer
       Tokenomia.Vesting.Contract
       Tokenomia.Tokenomic.CLAP.Simulation
@@ -71,6 +72,7 @@ library
       bytestring,
       containers,
       cardano-api,
+      cardano-cli,
       cardano-ledger-alonzo,
       plutus-ledger-api,
       serialise,

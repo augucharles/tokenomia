@@ -39,6 +39,7 @@ import qualified Tokenomia.Wallet.CLI as Wallet
 import qualified Tokenomia.Token.CLAPStyle.Mint as Token
 import qualified Tokenomia.Token.CLAPStyle.Burn as Token
 import qualified Tokenomia.Token.Transfer as Token
+import qualified Tokenomia.Vesting.CLI as Vesting
 
 load SearchPath ["echo","cardano-cli","clear"]
 
@@ -76,6 +77,7 @@ recursiveMenu = do
       TokenMint     -> Token.mint
       TokenBurn     -> Token.burn
       TokenTransfer -> Token.transfer
+      VestingFunds  -> Vesting.vestFunds
   liftIO waitAndClear         
   recursiveMenu
 
@@ -99,7 +101,8 @@ actions = NonEmpty.fromList [
     WalletRemove,
     TokenMint,
     TokenBurn,
-    TokenTransfer
+    TokenTransfer,
+    VestingFunds
     ]
 
 data Action
@@ -109,14 +112,16 @@ data Action
   | TokenMint
   | TokenBurn
   | TokenTransfer
+  | VestingFunds
   deriving (Show)
 
 
 instance ToStylizedText Action where
   toStylizedText item = case item of
-    WalletList    -> "[Wallet] - List Registered Ones" 
-    WalletAdd     -> "[Wallet] - Add "
-    WalletRemove  -> "[Wallet] - Remove"
-    TokenMint     -> "[Token]  - Mint with CLAP type policy (Fix Total Supply | one-time Minting and open Burning Policy )"
-    TokenBurn     -> "[Token]  - Burn Tokens with CLAP type policy"
-    TokenTransfer -> "[Token]  - Transfer "
+    WalletList    -> "[Wallet]  - List Registered Ones" 
+    WalletAdd     -> "[Wallet]  - Add "
+    WalletRemove  -> "[Wallet]  - Remove"
+    TokenMint     -> "[Token]   - Mint with CLAP type policy (Fix Total Supply | one-time Minting and open Burning Policy )"
+    TokenBurn     -> "[Token]   - Burn Tokens with CLAP type policy"
+    TokenTransfer -> "[Token]   - Transfer "
+    VestingFunds  -> "[Vesting] - Vest Funds"

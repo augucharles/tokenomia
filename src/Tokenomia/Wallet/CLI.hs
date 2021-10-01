@@ -46,7 +46,7 @@ import Byline.Internal.Stylized ()
 import Tokenomia.Adapter.Cardano.CLI as CardanoCLI
 import Tokenomia.Adapter.Cardano.CLI.UTxO
 
-load SearchPath ["echo","ssh","cat"]
+load SearchPath ["echo"]
 
 select :: (MonadIO m , MonadMask m) => m (Maybe Wallet)
 select = do
@@ -135,6 +135,7 @@ list = do
            mapM_ (\Wallet{..} -> do  
             liftIO $ echo ("> " <> name)
               <> echo ("    Payment Address : " <> paymentAddress)
+              <> echo ("    Public key : "      <> show verificationKey)
             utxos <- getUTxOs paymentAddress
             case utxos of 
               [] -> liftIO $ echo "\t(No UTxOs Available)"  
