@@ -19,10 +19,12 @@
 module Tokenomia.Adapter.Cardano.CLI.Internal
     ( -- Write 
       submitTx
+    , submitTxMetadata
     , registerMintingScriptFile
     , registerValidatorScriptFile
     , registerVestingIndex
     -- Wallet
+    , getTxFee
     , register_shelley_wallet
     , remove_shelley_wallet
     , restore_from_seed_phrase
@@ -86,6 +88,12 @@ type TxOutRef = String
 type WalletName = String
 type PaymentAddress = String
 type Address = String
+
+
+data Environment
+    = Testnet {magicNumber :: Integer}
+    | Mainnet {magicNumber :: Integer}
+
 
 data Wallet = Wallet
               { name :: WalletName
@@ -260,6 +268,58 @@ submitTx privateKeyPath buildTxBody = do
     liftIO (echo "Signing Tx")    >> sign_tx   rawHashTx signedHashTx privateKeyPath
     liftIO (echo "Submitting Tx") >> submit_tx signedHashTx
     liftIO $ echo "Tx sent"
+
+
+getTxFee :: ( MonadIO m
+            , MonadReader Environment m )
+            => FilePath -> m LB.ByteString
+getTxFee rawTx = do
+    environment <- ask
+    let magic = case environment of
+                                Testnet {..} -> magicNumber
+                                Mainnet {..} -> magicNumber
+    protocolParametersPath <- register_protocol_parameters
+    liftIO (
+        cardano_cli "transaction"
+                    "calculate-min-fee"
+                    "--tx-body-file" rawTx
+                    "--tx-in-count 1"
+                    "--tx-out-count 1"
+                    "--witness-count 1"
+                    "--byron-witness-count 0"
+                    "--testnet-magic" magic
+                    "--protocol-params-file" protocolParametersPath
+        |> capture)
+
+
+submitTxMetadata :: (ExecArg a, MonadIO m, MonadReader Environment m) => FilePath -> a -> m ()
+submitTxMetadata privateKeyPath buildTxBody = do
+    (txFolder, rawTx ) <- (\a-> (a,a <> "tx.raw")) <$> getFolderPath Transactions
+    liftIO $ cardano_cli
+        "transaction"
+        "build-raw"
+        (asArg buildTxBody)
+        "--fee 0"
+        "--out-file" rawTx
+
+    txFee <- getTxFee rawTx
+
+    liftIO $ cardano_cli
+        "transaction"
+        "build-raw"
+        (asArg buildTxBody)
+        "-fee" txFee
+        "--out-file" rawTx
+        -- Hashing the tx.raw and getting its hash x for renaming the tx.raw into x.raw    
+    (rawHashTx,signedHashTx) <- (\txHash -> ( txFolder <> txHash <> ".raw"
+                                            , txFolder <> txHash <> ".signed" ) )
+                                    . C.unpack . head <$> liftIO (md5sum rawTx |> captureWords )
+    liftIO $ mv rawTx rawHashTx
+    (liftIO $ echo "Signing Tx")    >> sign_tx   rawHashTx signedHashTx privateKeyPath
+    (liftIO $ echo "Submitting Tx") >> submit_tx signedHashTx
+    liftIO $ echo "Tx sent"
+
+
 
 submit_tx
     :: ( MonadIO m

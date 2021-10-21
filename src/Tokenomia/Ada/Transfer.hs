@@ -16,8 +16,9 @@ module Tokenomia.Ada.Transfer
 import Control.Monad.Reader
 
 import Shh
-    ( load,
-      ExecReference(SearchPath) )
+    ( load
+      , ExecReference(SearchPath)
+    )
 
 import Tokenomia.Adapter.Cardano.CLI
 import qualified Tokenomia.Wallet.CLI as Wallet
@@ -25,6 +26,7 @@ import qualified Tokenomia.Wallet.Collateral as Wallet
 import qualified Data.Text as T
 import           Tokenomia.Adapter.Cardano.CLI.Serialise
 import           Tokenomia.Adapter.Cardano.CLI.UTxO
+
 
 {-# ANN module "HLINT: ignore Use camelCase" #-}
 
@@ -53,11 +55,18 @@ transfer = do
                                                 Nothing -> liftIO $ echo "UTxO containing ONLY Ada not found in your wallet."
                                                 Just utxoWithAda  -> do
                                                     amount          <- liftIO $ echo "-n" "> Amount of Ada (in lovelaces) : "   >>  read @Integer <$> getLine
-                                                    submitTx paymentSigningKeyPath 
-                                                            [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithAda
-                                                            , "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithFees 
-                                                            , "--tx-out" , receiverAddr <> " " <> show amount <> " lovelace"
-                                                            , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral 
-                                                            , "--change-address"  , senderAddr]
+                                                    metadataJsonFilepath <- liftIO $ echo "Do you want to add metadata to your transaction ? (ENTER if no, [path to metada.json] if yes): " >> getLine
+                                                    if metadataJsonFilepath == ""
+                                                        then submitTx paymentSigningKeyPath
+                                                                    [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithAda
+                                                                    , "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithFees 
+                                                                    , "--tx-out" , receiverAddr <> " " <> show amount <> " lovelace"
+                                                                    , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral 
+                                                                    , "--change-address"  , senderAddr]
+                                                        else submitTxMetadata paymentSigningKeyPath
+                                                                    [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithAda
+                                                                    , "--metada-json-file", metadataJsonFilepath 
+                                                                    , "--tx-out" , receiverAddr <> " " <> show amount <> " lovelace"
+                                                                    , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral]
 
 
