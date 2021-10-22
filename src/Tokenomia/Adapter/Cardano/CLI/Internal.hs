@@ -63,19 +63,19 @@ import           Codec.Serialise ( serialise )
 import           Cardano.Api hiding (Testnet,Mainnet,Address)
 import qualified Cardano.Api.Shelley  as Shelley
 
-
-
 import           Ledger.Crypto
-
 import           Ledger hiding (Address)
 
 import qualified Plutus.V1.Ledger.Scripts as Script
 import           PlutusTx.IsData.Class ( ToData )
+import           Plutus.V1.Ledger.Ada (lovelaceOf, Ada)
 
 import           Tokenomia.Adapter.Cardano.CLI.Environment
+import           Tokenomia.Adapter.Cardano.CLI.UTxO as UTxO
 import           Tokenomia.Vesting.Contract
 import           Tokenomia.Common.Shell.InteractiveMenu
 import           Tokenomia.Adapter.Cardano.CLI.Data (dataToJSONString)
+
 
 {-# ANN module "HLINT: ignore Use camelCase" #-}
 
@@ -227,6 +227,23 @@ query_utxo
 query_utxo walletAddress = do
     magicN <- asks magicNumber
     TL.toStrict . TLE.decodeUtf8 <$> liftIO (cardano_cli "query" "utxo" "--testnet-magic" magicN "--address" walletAddress |> capture)
+
+
+getMinimalAdaRequired :: (MonadIO m, MonadReader Environment m) => PaymentAddress -> UTxO.UTxO -> m Ada
+getMinimalAdaRequired addr utxo = do
+    protocolParamsFile <- register_protocol_parameters
+    unparsedLovelaces  <- liftIO (cardano_cli
+                                  "transaction"
+                                  "calculate-min-required-utxo"
+                                  "--alonzo-era"
+                                  "--protocol-params-file" protocolParamsFile
+                                  "--tx-out" addr (show utxo)
+                            |> capture)
+    
+    return $ lovelaceOf (parse unparsedLovelaces)
+    where parse lovelaces = read @Integer (head (words (C.unpack lovelaces)))
+    
+    
 
 -- | Build a Tx , Sign it with the private key path provided and Submit it
 --   Temporary Files are persisted into ~/.cardano-cli/ folder 
