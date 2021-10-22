@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -fno-warn-unused-top-binds #-}
 
 
-module Tokenomia.Ada.Transfer 
+module Tokenomia.Ada.Transfer
     ( transfer ) where
 
 import Control.Monad.Reader
@@ -34,39 +34,39 @@ load SearchPath ["echo", "printf"]
 
 transfer :: (MonadIO m, MonadReader Environment m)  => m ()
 transfer = do
-    liftIO $ echo "Select the sender's wallet" 
+    liftIO $ echo "Select the sender's wallet"
     Wallet.askAmongAllWallets
-        >>= \case 
+        >>= \case
             Nothing -> liftIO $ print "No Wallet Registered !"
-            Just senderWallet@Wallet {paymentAddress = senderAddr,..} -> do 
+            Just senderWallet@Wallet {paymentAddress = senderAddr,..} -> do
                 Wallet.getCollateral senderWallet
                     >>= \case
                         Nothing -> liftIO $ printf "Please create a collateral\n"
-                        Just utxoWithCollateral -> do 
+                        Just utxoWithCollateral -> do
                             receiverAddr    <- liftIO $ echo "-n" "> Receiver address : "  >>  getLine
-                            liftIO $ echo "> Select the utxo containing ADAs for fees (please don't use the utxo containing 2 ADA as it is used for collateral) :" 
+                            liftIO $ echo "> Select the utxo containing ADAs for fees (please don't use the utxo containing 2 ADA as it is used for collateral) :"
                             Wallet.askUTxO senderWallet
-                                >>= \case 
+                                >>= \case
                                     Nothing -> liftIO $ echo "Please, add a ADA to your wallet"
-                                    Just utxoWithFees -> do 
-                                        liftIO $ echo "> Select the utxo containing Ada to transfer (please don't use the utxo containing 2 ADA as it is used for collateral) :" 
-                                        Wallet.askUTxOFilterBy containingStrictlyADAs senderWallet 
-                                            >>= \case  
+                                    Just utxoWithFees -> do
+                                        liftIO $ echo "> Select the utxo containing Ada to transfer (please don't use the utxo containing 2 ADA as it is used for collateral) :"
+                                        Wallet.askUTxOFilterBy containingStrictlyADAs senderWallet
+                                            >>= \case
                                                 Nothing -> liftIO $ echo "UTxO containing ONLY Ada not found in your wallet."
                                                 Just utxoWithAda  -> do
-                                                    amount          <- liftIO $ echo "-n" "> Amount of Ada (in lovelaces) : "   >>  read @Integer <$> getLine
-                                                    metadataJsonFilepath <- liftIO $ echo "Do you want to add metadata to your transaction ? (ENTER if no, [path to metada.json] if yes): " >> getLine
-                                                    if metadataJsonFilepath == ""
-                                                        then submitTx paymentSigningKeyPath
-                                                                    [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithAda
-                                                                    , "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithFees 
-                                                                    , "--tx-out" , receiverAddr <> " " <> show amount <> " lovelace"
-                                                                    , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral 
-                                                                    , "--change-address"  , senderAddr]
-                                                        else submitTxMetadata paymentSigningKeyPath
-                                                                    [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithAda
-                                                                    , "--metada-json-file", metadataJsonFilepath 
-                                                                    , "--tx-out" , receiverAddr <> " " <> show amount <> " lovelace"
-                                                                    , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral]
+                                                    amount <- liftIO $ echo "-n" "> Amount of Ada (in lovelaces) : "   >>  read @Integer <$> getLine
+                                                    let args = [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithAda
+                                                                , "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithFees
+                                                                , "--tx-out" , receiverAddr <> " " <> show amount <> " lovelace"
+                                                                , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral
+                                                                , "--change-address"  , senderAddr]
+
+                                                    (liftIO $ echo "Add label to your transaction (leave blank if no)" >> getLine)
+                                                        >>= \case
+                                                            [] -> submitTx paymentSigningKeyPath args
+                                                            message -> do
+                                                                metadataJsonFilepath <- createMetadataFile message
+                                                                submitTx paymentSigningKeyPath (args <> ["--metadata-json-file", metadataJsonFilepath])
+
 
 

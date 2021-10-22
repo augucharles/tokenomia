@@ -13,7 +13,7 @@
 module Tokenomia.Adapter.Cardano.CLI
     ( -- Write 
       Internal.submitTx
-    , Internal.submitTxMetadata
+    , Internal.createMetadataFile
     , Internal.registerMintingScriptFile
     , Internal.registerValidatorScriptFile
     , Internal.registerVestingIndex
@@ -22,7 +22,6 @@ module Tokenomia.Adapter.Cardano.CLI
     , Internal.remove_shelley_wallet
     , Internal.restore_from_seed_phrase
       -- Read 
-    , Internal.getTxFee
     , Internal.query_registered_wallets
     , Internal.getVestingIndex
     , Internal.getScriptLocation

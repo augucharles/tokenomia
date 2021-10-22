@@ -19,12 +19,11 @@
 module Tokenomia.Adapter.Cardano.CLI.Internal
     ( -- Write 
       submitTx
-    , submitTxMetadata
+    , createMetadataFile
     , registerMintingScriptFile
     , registerValidatorScriptFile
     , registerVestingIndex
     -- Wallet
-    , getTxFee
     , register_shelley_wallet
     , remove_shelley_wallet
     , restore_from_seed_phrase
@@ -51,7 +50,7 @@ import           Data.Text.Lazy.Encoding as TLE ( decodeUtf8 )
 import qualified Data.ByteString.Lazy.Char8 as C
 import qualified Data.ByteString.Short as SBS
 import qualified Data.ByteString.Lazy as LB
-import qualified Data.ByteString.Lazy.UTF8 as BLU 
+import qualified Data.ByteString.Lazy.UTF8 as BLU
 
 import           Control.Monad.Reader
 
@@ -78,6 +77,8 @@ import           Tokenomia.Adapter.Cardano.CLI.Environment
 import           Tokenomia.Vesting.Contract
 import           Tokenomia.Common.Shell.InteractiveMenu
 import           Tokenomia.Adapter.Cardano.CLI.Data (dataToJSONString)
+import Text.ParserCombinators.ReadPrec (lift)
+
 
 {-# ANN module "HLINT: ignore Use camelCase" #-}
 
@@ -88,12 +89,6 @@ type TxOutRef = String
 type WalletName = String
 type PaymentAddress = String
 type Address = String
-
-
-data Environment
-    = Testnet {magicNumber :: Integer}
-    | Mainnet {magicNumber :: Integer}
-
 
 data Wallet = Wallet
               { name :: WalletName
@@ -270,57 +265,6 @@ submitTx privateKeyPath buildTxBody = do
     liftIO $ echo "Tx sent"
 
 
-getTxFee :: ( MonadIO m
-            , MonadReader Environment m )
-            => FilePath -> m LB.ByteString
-getTxFee rawTx = do
-    environment <- ask
-    let magic = case environment of
-                                Testnet {..} -> magicNumber
-                                Mainnet {..} -> magicNumber
-    protocolParametersPath <- register_protocol_parameters
-    liftIO (
-        cardano_cli "transaction"
-                    "calculate-min-fee"
-                    "--tx-body-file" rawTx
-                    "--tx-in-count 1"
-                    "--tx-out-count 1"
-                    "--witness-count 1"
-                    "--byron-witness-count 0"
-                    "--testnet-magic" magic
-                    "--protocol-params-file" protocolParametersPath
-        |> capture)
-
-
-submitTxMetadata :: (ExecArg a, MonadIO m, MonadReader Environment m) => FilePath -> a -> m ()
-submitTxMetadata privateKeyPath buildTxBody = do
-    (txFolder, rawTx ) <- (\a-> (a,a <> "tx.raw")) <$> getFolderPath Transactions
-    liftIO $ cardano_cli
-        "transaction"
-        "build-raw"
-        (asArg buildTxBody)
-        "--fee 0"
-        "--out-file" rawTx
-
-    txFee <- getTxFee rawTx
-
-    liftIO $ cardano_cli
-        "transaction"
-        "build-raw"
-        (asArg buildTxBody)
-        "-fee" txFee
-        "--out-file" rawTx
-        -- Hashing the tx.raw and getting its hash x for renaming the tx.raw into x.raw    
-    (rawHashTx,signedHashTx) <- (\txHash -> ( txFolder <> txHash <> ".raw"
-                                            , txFolder <> txHash <> ".signed" ) )
-                                    . C.unpack . head <$> liftIO (md5sum rawTx |> captureWords )
-    liftIO $ mv rawTx rawHashTx
-    (liftIO $ echo "Signing Tx")    >> sign_tx   rawHashTx signedHashTx privateKeyPath
-    (liftIO $ echo "Submitting Tx") >> submit_tx signedHashTx
-    liftIO $ echo "Tx sent"
-
-
-
 submit_tx
     :: ( MonadIO m
        , MonadReader Environment m )
@@ -346,6 +290,18 @@ sign_tx body_file outFile signing_key_file = do
         "--signing-key-file" signing_key_file
         "--testnet-magic" magicN
         "--out-file" outFile
+
+
+createMetadataFile :: (MonadIO m, MonadReader Environment m) => String -> m FilePath
+createMetadataFile message = do
+    tmpFolder <- getFolderPath TMP
+    randomInt <- liftIO ( abs <$> randomIO :: IO Integer)
+    let metadataJsonFilepath = tmpFolder <> show randomInt <> "metadata.json"
+
+    liftIO $ echo "-n" ("{\"" ++ show randomInt ++ "\":{\"userNote\":\"" ++ message ++ "\"}}")
+        &> (Truncate . fromString) metadataJsonFilepath
+    return metadataJsonFilepath
+
 
 register_protocol_parameters
     :: ( MonadIO m
@@ -422,7 +378,7 @@ getScriptLocation :: ( MonadIO m , MonadReader Environment m )
     => Validator
     -> m ScriptLocation
 getScriptLocation validator = do
-    networkOption <- asks (\case 
+    networkOption <- asks (\case
                         Mainnet {} -> asArg ["--mainnet"]
                         Testnet {magicNumber} ->  asArg ["--testnet-magic", show magicNumber])
     scFolder <- getFolderPath Validators

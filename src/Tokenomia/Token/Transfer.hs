@@ -56,13 +56,19 @@ transfer = do
                                             Just utxoWithToken  -> do
                                                 let (tokenPolicyHash,tokenNameSelected,totalAmount) = getTokenFrom utxoWithToken
                                                 amount <- liftIO $ echo "-n" "> Amount of Token : "   >>  read @Integer <$> getLine
-                                                submitTx paymentSigningKeyPath 
-                                                        [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithToken
-                                                        , "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithFees 
-                                                        , "--tx-out" , receiverAddr <> " + 1344798 lovelace + " <> show amount <> " " <> show tokenPolicyHash <> "." <> toString tokenNameSelected 
-                                                        , "--tx-out" , senderAddr   <> " + 1344798 lovelace + " <> show (totalAmount - amount) <> " " <> show tokenPolicyHash <> "." <> toString tokenNameSelected 
-                                                        , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral 
-                                                        , "--change-address"  , senderAddr]
+                                                let args = [ "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithToken
+                                                            , "--tx-in"  , (T.unpack . toCLI . txOutRef) utxoWithFees 
+                                                            , "--tx-out" , receiverAddr <> " + 1344798 lovelace + " <> show amount <> " " <> show tokenPolicyHash <> "." <> toString tokenNameSelected 
+                                                            , "--tx-out" , senderAddr   <> " + 1344798 lovelace + " <> show (totalAmount - amount) <> " " <> show tokenPolicyHash <> "." <> toString tokenNameSelected 
+                                                            , "--tx-in-collateral", (T.unpack . toCLI . txOutRef) utxoWithCollateral 
+                                                            , "--change-address"  , senderAddr]
+
+                                                (liftIO $ echo "Add label to your transaction (leave blank if no)" >> getLine)
+                                                    >>= \case
+                                                        [] -> submitTx paymentSigningKeyPath args
+                                                        message -> do
+                                                            metadataJsonFilepath <- createMetadataFile message
+                                                            submitTx paymentSigningKeyPath (args <> ["--metadata-json-file", metadataJsonFilepath])
 
 
 
